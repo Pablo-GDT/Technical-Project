@@ -59,7 +59,7 @@ def mod_Morris_Lecar2(t, u, p):
 
 
 
-def Morris_lecar(t, u):
+def Morris_lecar(t, u, C_m: float = 1):
 
     # N : recovery variable: the probability that the K+ channel is conducting
     (V, n, Ca_conc) = u
@@ -83,7 +83,7 @@ def Morris_lecar(t, u):
     g_KCa = 0.8
 
     # membrane capacitance
-    C_m = 1 
+    # C_m = 1 
 
     # I_app = applied current
     I_app = 45 
@@ -105,7 +105,7 @@ def Morris_lecar(t, u):
     M_inf = 0.5*(1 + np.tanh((V - V_1)/V_2)) # (2)
     N_inf = 0.5*(1 + np.tanh((V - V_3)/V_4)) # (3)
     tau_n = 1/(np.cosh((V - V_3)/(2*V_4))) # (4)
-
+    
     # I_KCa calcium dependent potassium channel (outward current)
     I_KCa = g_KCa*z*(V-E_k)
     I_Ca =  g_Ca*M_inf*(V-E_Ca)
@@ -115,6 +115,8 @@ def Morris_lecar(t, u):
     dCa_conc_dt = eta*(-mu*I_Ca - k_Ca*Ca_conc)
     
     return np.array((dVdt, dndt, dCa_conc_dt))
+
+
 
 def Hindmarsh_rose(t, u):
     a = 1
@@ -132,33 +134,36 @@ def Hindmarsh_rose(t, u):
 
     return np.array([dxdt,dydt,dzdt])
 
-def ivp_solver(system_of_equations, t0, t_end, inital_cond):
-    sol = solve_ivp(system_of_equations,(t0, t_end), inital_cond)
-    time_vec = sol.t
-    vars_vec = sol.y
-    return time_vec, vars_vec
+def ivp_solver(system_of_equations, params: list, t0, t_end, inital_cond):
+    sol = solve_ivp(system_of_equations,(t0, t_end), inital_cond, args=params)
+    return sol.t, sol.y
 
-def plot_sol(t, y):
-    plt.plot(t, y)
-    plt.show()
 
+
+def convert_ml_voltage_to_current(v_array, capcitance):
+     I_total = -capcitance * v_array
+     return I_total
+    
 
 if __name__ == '__main__':
-    t0 = 0
-    t_end =1000
-    y_morris = (-25, 0.9, 0.001)
-    time_vec, vars_vec = ivp_solver(Morris_lecar, t0, t_end, y_morris)
-    plot_sol(time_vec,vars_vec[0])
+    pass
+    # t0 = 0
+    # t_end =1000
+    # y_morris = (-25, 0.9, 0.001)
+    # time_vec, vars_vec = ivp_solver(Morris_lecar_current, t0, t_end, y_morris)
+    # C = 2
+    # I_total = -C * vars_vec[0]
+    # plot_sol(time_vec[:200],I_total[:200])
     
 
 
 
-    y_hein = (0, 0.9, 0.001)
-    heind_sol = solve_ivp(Hindmarsh_rose, (t0, t_end), y_hein)
-    X, Y, Z = heind_sol.y
-    plt.plot(heind_sol.t, X)
-    plt.show()
-    plt.plot(heind_sol.t, Y)
-    plt.show()
-    plt.plot(heind_sol.t, Z)
-    plt.show()
+    # y_hein = (0, 0.9, 0.001)
+    # heind_sol = solve_ivp(Hindmarsh_rose, (t0, t_end), y_hein)
+    # X, Y, Z = heind_sol.y
+    # plt.plot(heind_sol.t, X)
+    # plt.show()
+    # plt.plot(heind_sol.t, Y)
+    # plt.show()
+    # plt.plot(heind_sol.t, Z)
+    # plt.show()
