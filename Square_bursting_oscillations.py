@@ -3,7 +3,7 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 from typing import Tuple, List
 
-def morris_lecar_defaults() -> dict:
+def morris_lecar_defaults(C_m: float = 20, phi: float = 0.24, epsilon: float = 0.0002) -> dict:
     params = {
             "V_1" : -1.2,
             "V_2" : 18,
@@ -20,14 +20,14 @@ def morris_lecar_defaults() -> dict:
             "g_Ca" : 4,
             "g_KCa" : 0.60,
 
-            "C_m" : 20, 
+            "C_m" :  C_m, 
 
             # I_app : applied current
             "I_app" : 45,
 
-            "phi" : 0.24,
-            #  ratio of free to total calcium in the cell
-            "epsilon" : 0.0002,
+            "phi" : phi,
+            #  ratio of free to total calcium in the cell range (0.00018 - 0.0002)
+            "epsilon" : epsilon,
             #  k_Ca  : calcium removal rate
             "k_Ca" : 1,
             #  mu converting current into a concentration flux involving the cell's surface area to the calcium compartment volume
@@ -72,8 +72,8 @@ def convert_ml_voltage_to_current( V_arr: np.array, n_arr: np.array, Ca_conc_arr
 
 
 
-def apply_voltage_filter(v_array: np.array, a: float =4.2) -> np.array:
-    stretched = np.array([a*v if v > 0 else v for v in v_array])
+def apply_voltage_filter(v_array: np.array, stretch: float =4.2) -> np.array:
+    stretched = np.array([stretch*v if v > 0 else v for v in v_array])
     translated = stretched - 30
     return translated
 
@@ -88,26 +88,24 @@ def plot_voltage(time_vec: np.array, volt_vec: np.array, title: str = "The Morri
 
 def voltage_passes_threshold(t, system_state, args):
    
-    return system_state[0] +20
+    return system_state[0] + 2
 
-def get_ml_threshold_passing_events(sol):
+def filter_threshold_passing_events(sol: object):
+    event_t_arr = sol.t_events[0]
+    event_y_arr = sol.y_events[0]
+    e_filter = np.array([sol.t[0] <= event <= sol.t[-1] for event in  event_t_arr])
+  
+    if e_filter == []:
+        raise Exception("no events identified please ensure the event being tracked is valid!")
+    
+    filtered_t_events = event_t_arr[e_filter]
+    filtered_y_events =  event_y_arr[e_filter]
+    return filtered_t_events, filtered_y_events 
 
-    return sol.t_events[0], sol.y_events[0][:,0]
-
-def ivp_solver(system_of_equations: callable,  time_range: tuple, inital_cond: tuple, params: callable = morris_lecar_defaults(), track_event: callable = voltage_passes_threshold) -> Tuple[np.array,np.array]:
-    sol = solve_ivp(system_of_equations, time_range, inital_cond, args=(params,), events= track_event)
+def ivp_solver(system_of_equations: callable,  time_range: tuple, inital_cond: tuple, params: callable = morris_lecar_defaults(), track_event: callable = voltage_passes_threshold) -> object:
+    track_event.direction = 1
+    sol = solve_ivp(system_of_equations, time_range, inital_cond, args=(params,), events= track_event, t_eval= np.arange(time_range[0], time_range[1],time_range[2]))
     return sol
 
 if __name__ == '__main__':
-    C = 20
-    sol = solve_ivp(morris_lecar,(0, 10000), (-20, 1, 0.001), args= (morris_lecar_defaults(),), events= voltage_passes_threshold)
-    print(sol.t_events)
-    # print(sol.y_events[0][:,0])
-    plt.plot(sol.t, sol.y[0], label= 'voltage')
-    plt.plot(sol.t_events[0],sol.y_events[0][:,0], label = 'events')
-    plt.legend()
-    plt.show()
-    # filtered = apply_voltage_filter(sol.y[0])
-    # print(filtered)
-    
-   
+    pass
