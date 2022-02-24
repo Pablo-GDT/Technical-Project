@@ -116,24 +116,19 @@ def mixing_function(sig: List[np.array], onset: List[float]):
         result[onset[i]:onset[i] + len(sig[i])] += sig[i] 
     return result
 
-def shift_signals(signals: List[np.array], onset: List[float], stepsize:float):
-    max_onset = max(onset)
+def shift_signals(signals: List[np.array], onset: List[float]):
     new_signal_lengths = [o + len(s) for o, s in zip(onset, signals)]
-    min_new_length = np.min( new_signal_lengths )
     maxlen = np.max( new_signal_lengths )
-    print("max len", maxlen)
-    print(max_onset, min_new_length * stepsize)
-    overlapping_t_domain = np.arange(max_onset * stepsize, min_new_length * stepsize, stepsize)
-    print("overlapping len", len( overlapping_t_domain))
-    print("overlapping len", int(max_onset / stepsize) , int(min_new_length / stepsize))
-    shifted_sigs =  []
+    arr = np.zeros((maxlen,))
+    shifted_signals = []
     for i in range(len(onset)):
-        arr = np.zeros((maxlen,))
         arr[onset[i]:onset[i] + len(signals[i])] += signals[i] 
-        sliced_arr = arr[int(max_onset / stepsize) : int(min_new_length / stepsize)]
-        shifted_sigs.append(sliced_arr)
+        shifted_signals.append(arr)
+    return shifted_signals
 
-    return overlapping_t_domain, shifted_sigs
+
+
+
 
 
 def MEA_point_source(pos_vec: np.array, source_vec: np.array, I: np.array, sigma_t: float, sigma_s: float, h: float, N_max: int = 30):
@@ -171,100 +166,76 @@ def electrode_measurements(neuron_list: list, MEA_set_up: dict, currents):
     
     return measurement
 
-def shift_simulations(ts:List[np.array], onsets: list, cval = 0)-> List[np.array]:
-    
-    for i in range(len(ts)):
-        ts[i] = add_onset(ts[i], onsets[i])
-      
-    return ts
 
-def add_onset(ts: np.array, onset: float) -> np.array:
-  ts += onset
-  return ts
-
-def shift_signal(voltages:np.ndarray,  shifts: list):
-    shifted_signals = [np.roll(voltages, shift) for shift, voltages in zip(shifts, voltages)]
-    return shifted_signals
+def plot_signal(signal: np.array) -> None:
+    plt.scatter(signal[:, 0], signal[:, 1])
+    return None
 
 
+def shift_signal(signal: np.array, shift_amount: float) -> np.array:
+
+    new_signal = signal.copy()
+    new_signal[:, 0] += shift_amount
+    return new_signal
 
 
-def shift_events(ts: np.array ,t_events:np.ndarray, shifts: list, stepsize:float):
-    edited_events = []
-    shifted_t_events =  [(t_event_arr +shift*stepsize) for t_event_arr, shift in zip(t_events, shifts)]
-    for t, shifted_events in zip(ts, shifted_t_events):
-        max_t = t[-1]
-        min_t = t[0]
-        shifted_n_rolled = [min_t + (max_t - event)  if event > max_t else event for event in shifted_events]
-        edited_events.append(shifted_n_rolled)
-    return edited_events
+def time_intersection(signals: List[np.array]) -> Tuple[float, float]:
+    min_times = []
+    max_times = []
 
-if __name__ == '__main__':
-    
-    neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 40000, 0.1), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([1,1,1])},
-                    {'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 40000, 0.1), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.22, 'track_event': sb.voltage_passes_threshold ,'location': np.array([1,2,1])}]
-    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+    for i in range(len(signals) - 1):
+        current_signal = set(signals[i][:, 0])
+        next_signal = set(signals[i+1][:, 0])
+        intersection = current_signal & next_signal
+
+        min_time = min(intersection)
+        max_time = max(intersection)
+
+        min_times.append(min_time)
+        max_times.append(max_time)
+
+    min_time = max(min_times)
+    max_time = min(max_times)
+
+    return min_time, max_time
+
+
+def splice_signal_based_on_intersection(signal: np.array, lower: float, upper: float):
+    spliced_x_column = signal[(upper >= signal[:, 0]) & (signal[:, 0] >= lower)]
+    return spliced_x_column
+
+def shift_and_splice_signals(ts: np.array, signals: List[np.array],time_events, y_events, shifts: list):
+    time_events_matrix =   [np.array(list(zip(t_event, y_event))) for t_event, y_event in zip(time_events, y_events)]
+    time_signal_matrix =  [np.array(list(zip(t_arr,v_arr))) for t_arr, v_arr in zip(ts, signals)]
+    shifted_events = [shift_signal(event, shift) for event, shift in zip(time_events_matrix, shifts)]
+    shifted_signals = [shift_signal(signal, shift) for signal, shift in zip(time_signal_matrix, shifts)]
+    lower, upper = time_intersection(shifted_signals)
+    spliced_signals =  [splice_signal_based_on_intersection(sig, lower, upper) for sig in shifted_signals]
+    spliced_events = [splice_signal_based_on_intersection(event, lower, upper) for event in shifted_events]
+    return spliced_signals, spliced_events
+
+
+def main():
+
+    neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([1,1,1])},
+                    {'param_set': sb.morris_lecar_defaults(epsilon = 0.00018), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.22, 'track_event': sb.voltage_passes_threshold ,'location': np.array([1,2,1])}]
     mea_parameters = {'sigma_tissue': 0.3, 'sigma_saline': 1.5, 'brain_slice_height': 300, 'electrode_position': np.array([5, 5, 0])}
-
-    # ts = np.concatenate(ts, axis= 0)
-    # voltages = np.concatenate(voltages, axis= 0)
-    # plt.plot(ts[0], voltages[0], label = 'transmembrane voltage n1')
-    # plt.plot(ts[0], voltages[1], label = 'transmembrane voltage n1')
-    # plt.scatter(ts[0], voltages[0], c= 'r')
-    # shifted_ts = np.concatenate(shifted_ts, axis= 0)
-
-    # hifted_ts = shift_simulations(ts, [5000, 0])
+    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
    
-    plt.plot(ts[0], voltages[0], label = 'transmembrane voltage n1')
-    plt.scatter(time_events, y_events, c= 'r')
-    plt.show()
-    # consider shifting in the integrate function
-    print("lengths before shifting", len(ts[0]), len(voltages[0]))
-    t, sigs = shift_signals(voltages, [20000, 0], 0.1)
+    shifts = [1000, 0]
+    spliced_signals, spliced_events = shift_and_splice_signals(ts, currents,time_events, y_events, shifts)
     
-    for i in range(len(sigs)):
-       
-        plt.plot(t, sigs[i], label = 'transmembrane voltage n1')
+
+   
+    for i, (sig, event) in enumerate(zip(spliced_signals, spliced_events)):
+        plt.plot(sig[:, 0], sig[:, 1], label = "sig_{}".format( i))
+        plt.scatter(event[:, 0], event[:, 1], label = "events_{}".format( i), c = 'r')
+    plt.legend()
     plt.show()
     exit()
-    shift_t_events = shift_events(ts, time_events, [20000, 0], 0.1)
-    
-    plt.plot(ts[0], shifted_voltages[0], label = 'shifted voltage n1')
-    plt.scatter(shift_t_events[0], y_events[0], c= 'r')
-    # plt.plot(ts[0], voltages[0], label = 'transmembrane voltage n1')
-    plt.show()
-    exit()
-    plt.plot(ts[0], voltages[0], label = 'transmembrane voltage n1')
-    plt.plot(np.arange(0,len(shifted_voltages[0]), 0.1), shifted_voltages[0], label = 'transmembrane voltage n2')
-    plt.show()
-    # plt.plot(ts[1], voltages[1], label = 'transmembrane voltage n2')
-    
    
-    # plt.show()
     # elec_m = electrode_measurements(neurons_list, mea_parameters, currents)
-    # print(elec_m)
-
-    # max_len, combined = mixing_function(voltages, [0, 1000])
-    # print(combined)
-
-    
-    # plt.plot(ts[0], voltages[0], label = 'transmembrane voltage')
-    # plt.show()
-
-    # plt.plot(ts[0], combined, label = 'transmembrane voltage')
-    # plt.show()
-
-    # plt.scatter(time_events[0], y_events[0], label = 'events', color= 'r')
-    # plt.legend()
-    # plt.show()
-
-    # plt.plot(ts[1], voltages[1], label = 'transmembrane voltage')
-
-    # plt.scatter(time_events[1], y_events[1], label = 'events', color= 'r')
-    # plt.legend()
-    # plt.show()
-    
-
+   
     # measurement = MEA_electrode_recording(np.array([0.5,1,0]), np.array([1,3,6]),  I_total, 0.4, 0.001, 20, 30)
     # measurement = add_noise(measurement)
     # plt.plot(sol.t[1100:4000], I_total[1100:4000], label = 'Current converted bursting signal')
@@ -274,6 +245,12 @@ if __name__ == '__main__':
     # plt.title("Foward modelling an intracellular burst signal using MoI", fontsize = 20)
     # plt.legend()
     # plt.show()
+
+if __name__ == "__main__":
+
+    main()
+    
+
 
 
 

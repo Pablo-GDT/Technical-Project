@@ -88,7 +88,7 @@ def plot_voltage(time_vec: np.array, volt_vec: np.array, title: str = "The Morri
 
 def voltage_passes_threshold(t, system_state, args):
    
-    return system_state[0] + 2
+    return system_state[0] + 2.5
 
 def filter_threshold_passing_events(sol: object):
     event_t_arr = sol.t_events[0]
@@ -107,5 +107,7 @@ def ivp_solver(system_of_equations: callable,  time_range: tuple, inital_cond: t
     sol = solve_ivp(system_of_equations, time_range, inital_cond, args=(params,), events= track_event, t_eval= np.arange(time_range[0], time_range[1],time_range[2]))
     return sol
 
-if __name__ == '__main__':
+def main():
     pass
+if __name__ == '__main__':
+    main()
