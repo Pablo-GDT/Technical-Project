@@ -3,36 +3,38 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 from typing import Tuple, List
 
-def morris_lecar_defaults(C_m: float = 20, phi: float = 0.24, epsilon: float = 0.0002) -> dict:
+def morris_lecar_defaults(V_1: float = -1.2,V_2 : float = 18, V_3 : float = 12, V_4 : float = 17.4, E_Ca : float = 123, E_k : float = -84, E_L : float = -60, 
+                           g_K : float = 8, g_L : float = 2, g_Ca : float = 4, g_KCa : float = 0.60, C_m: float = 20, I_app : float = 45, phi: float = 0.24, 
+                           epsilon: float = 0.0002, k_Ca : float = 1, mu : float = 0.01, f : float = 9) -> dict:
     params = {
-            "V_1" : -1.2,
-            "V_2" : 18,
-            "V_3" : 12,
-            "V_4" : 17.4,
+            "V_1" : V_1,
+            "V_2" : V_2,
+            "V_3" : V_3,
+            "V_4" : V_4,
 
-            "E_Ca" : 123,
-            "E_k" : -84,
-            "E_L" : -60,
+            "E_Ca" : E_Ca,
+            "E_k" : E_k,
+            "E_L" : E_L,
 
         # peak conductances of the channel proteins
-            "g_K" : 8,
-            "g_L" : 2,
-            "g_Ca" : 4,
-            "g_KCa" : 0.60,
+            "g_K" : g_K,
+            "g_L" :  g_L,
+            "g_Ca" : g_Ca,
+            "g_KCa" : g_KCa,
 
             "C_m" :  C_m, 
 
             # I_app : applied current
-            "I_app" : 45,
+            "I_app" : I_app,
 
             "phi" : phi,
             #  ratio of free to total calcium in the cell range (0.00018 - 0.0002)
             "epsilon" : epsilon,
             #  k_Ca  : calcium removal rate
-            "k_Ca" : 1,
+            "k_Ca" : k_Ca,
             #  mu converting current into a concentration flux involving the cell's surface area to the calcium compartment volume
-            "mu" : 0.01,
-            "f" : 9,
+            "mu" :  mu ,
+            "f" : f,
     }
     return params 
 
@@ -65,8 +67,8 @@ def get_I_Ca(V:float , params:dict) -> float:
 def convert_ml_voltage_to_current( V_arr: np.array, n_arr: np.array, Ca_conc_arr: np.array, params: dict) -> np.array:
     I_KCa = get_I_KCa(Ca_conc_arr, V_arr, params)
     I_Ca = get_I_Ca(V_arr, params)
-    #      # feed voltage into Morris lecar to get dvdt then convert to .feed values into this equation  g_L*(V- E_L) - g_K*n*(V-E_k) - I_Ca - I_KCa)/C_m
-    I_total = (-params["g_L"]*(V_arr- params["E_L"]) - params["g_K"]*n_arr*(V_arr-params["E_k"]) - I_Ca - I_KCa)
+    #      # feed voltage into Morris lecar to get dvdt then convert to .feed values into this equation  -g_L*(V- E_L) - g_K*n*(V-E_k) - I_Ca - I_KCa)/C_m
+    I_total = (-params["g_L"]*(V_arr- params["E_L"]) - params["g_K"]*n_arr*(V_arr-params["E_k"]) - I_Ca - I_KCa)/params["C_m"]
     return I_total
 
 
@@ -88,7 +90,7 @@ def plot_voltage(time_vec: np.array, volt_vec: np.array, title: str = "The Morri
 
 def voltage_passes_threshold(t, system_state, args):
    
-    return system_state[0] + 2.5
+    return system_state[0] - 9.1
 
 def filter_threshold_passing_events(sol: object):
     event_t_arr = sol.t_events[0]
