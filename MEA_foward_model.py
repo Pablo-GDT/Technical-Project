@@ -2,9 +2,12 @@ import sys
 import Square_bursting_oscillations as sb
 import math
 import numpy as np
+from copy import deepcopy
 import matplotlib.pyplot as plt
 from typing import List, Tuple
 from numpy.core.fromnumeric import std
+import os
+import scipy.io, scipy.signal
 
 sys.path.insert(0, "torbness_vimeapy")
 try:
@@ -29,7 +32,7 @@ def point_like_potential(pos_vec: np.array, I : float, homog_elec_cond: float):
     return pos_potential
 
 def assert_is_zero(val):
-    assert val == 0 
+    assert val == 0, "A necessary value is not zero: {}.".format(val)
 
 def assert_is_positive(val):
     assert val > 0
@@ -81,7 +84,7 @@ def MEA_point_source(pos_vec: np.array, source_vec: np.array, I: np.array, sigma
     W_ts = (sigma_t - sigma_s)/(sigma_t + sigma_s)
     displacement_vec = pos_vec - source_vec 
     evaluation_coordinates = [displacement_vec[0], displacement_vec[1], - source_vec[2]]
-    standard_potential =  point_like_potential( evaluation_coordinates, I, sigma_t)
+    standard_potential =  2*point_like_potential( evaluation_coordinates, I, sigma_t)
     series_potential = 2* sum([summation_terms(displacement_vec, source_vec, W_ts, n, h, I, sigma_t) for n in range(1, N_max + 1)])
     total_potential = standard_potential + series_potential
     
@@ -89,17 +92,20 @@ def MEA_point_source(pos_vec: np.array, source_vec: np.array, I: np.array, sigma
 
 def electrode_measurements(neuron_list: list, MEA_set_up: dict, currents):
     
-    measurement = sum([ MEA_point_source(MEA_set_up['electrode_position'], neuron['location'], currents[count][:, 1], MEA_set_up['sigma_tissue'], 
+    potential = sum([ MEA_point_source(MEA_set_up['electrode_position'], neuron['location'], currents[count][:, 1], MEA_set_up['sigma_tissue'], 
                 MEA_set_up['sigma_saline'], MEA_set_up['brain_slice_height']) for count, neuron in enumerate(neuron_list)])
+
+    potential_signal = np.array(list(zip(currents[0][:,0], potential)))
     
-    return measurement
+    return potential_signal 
 
-def add_noise(signal:np.array, mu: float = 0) -> np.array:
-    std = np.std(signal)
-    noise = np.random.normal(mu, std, len(signal))
+def add_gaussian_noise(signal:  np.array, mu: float = 0) -> np.array:
+    """Add Gaussian white noise to signal"""
+    # copy = deepcopy(signals)
+   
+    signal[:, 1] += np.random.normal(mu, np.std(signal[:, 1]), len(signal[:, 1]))
 
-    return signal + noise
-
+    return signal
 def plot_current(sol_t: np.array, sol_I: np.array, title: str ="Intracellular current signal derived from transmembrane voltage recording") -> None:
         plt.plot(sol_t, sol_I, label = 'current')
         plt.xlabel("time (arbitrary)", fontsize=18)
@@ -120,17 +126,20 @@ def integrate_neurons(neurons_list: List[dict]) -> Tuple[np.array]:
     currents = []
     time_events = []
     volt_events = []
+  
     for neuron_dict in neurons_list:
-        sol = sb.ivp_solver(sb.morris_lecar, neuron_dict['time_range'], neuron_dict['initial_cond'], neuron_dict['param_set'], neuron_dict['track_event'])
+        sol = sb.ivp_solver(sb.morris_lecar, time_range = neuron_dict['time_range'], initial_cond = neuron_dict['initial_cond'], params = neuron_dict['param_set'], track_event = neuron_dict['track_event'])
         sol.t, sol.y = remove_integration_artifacts(sol)
         sol.t_events, sol.y_events = sb.filter_threshold_passing_events(sol)
         ts.append(sol.t)
         voltages.append(sol.y[0])
         time_events.append(sol.t_events)
         volt_events.append(sol.y_events[:,0])
-        sol.y[0] = sb.apply_voltage_filter(sol.y[0])
+        
+        sol.y[0] = sb.apply_voltage_filter(sol.y[0], stretch= neuron_dict['stretch'])
         sol_current = sb.convert_ml_voltage_to_current(*sol.y, neuron_dict['param_set'])
         currents.append(sol_current)
+   
     return ts, voltages, currents, time_events, volt_events
 
 def remove_integration_artifacts(sol: np.ndarray, percent: float= 0.3) -> np.array:
@@ -141,8 +150,10 @@ def remove_integration_artifacts(sol: np.ndarray, percent: float= 0.3) -> np.arr
     
     return shortened_t, shortened_sig
 
-def plot_signal(signal: np.array) -> None:
-    plt.scatter(signal[:, 0], signal[:, 1])
+def plot_2D_signal(signal: np.array) -> None:
+    
+    plt.plot(signal[0][:, 0], signal[0][:, 1])
+    plt.show()
     return None
 
 def plot_signal_and_events(signal:List[np.array], events:List[np.array]):
@@ -188,12 +199,15 @@ def  assert_list_is_not_singular(list:list):
     else:
         raise Exception("The list you passed has one or no elements. Please verify its input: {}".format(list))
 
-def shift_and_splice_signals(ts: np.array, signals: List[np.array],time_events, y_events, shifts: list):
+def combine_time_and_signal_into_2d_array(times: List[np.array], signals: List[np.array]):
+    return [np.array(list(zip(t_event, y_event))) for t_event, y_event in zip(times, signals)]
+
+def shift_and_splice_signals(ts: List[np.array], signals: List[np.array],time_events, y_events, shifts: list):
     assert_list_is_not_singular(signals)
     assert_list_is_not_singular(shifts)
     assert_list_is_not_singular(time_events)
-    time_events_matrix =   [np.array(list(zip(t_event, y_event))) for t_event, y_event in zip(time_events, y_events)]
-    time_signal_matrix =  [np.array(list(zip(t_arr,v_arr))) for t_arr, v_arr in zip(ts, signals)]
+    time_events_matrix =   combine_time_and_signal_into_2d_array(time_events, y_events)
+    time_signal_matrix =  combine_time_and_signal_into_2d_array(ts, signals)
     shifted_events = [shift_signal(event, shift) for event, shift in zip(time_events_matrix, shifts)]
     shifted_signals = [shift_signal(signal, shift) for signal, shift in zip(time_signal_matrix, shifts)]
     lower, upper = time_intersection(shifted_signals)
@@ -201,15 +215,15 @@ def shift_and_splice_signals(ts: np.array, signals: List[np.array],time_events, 
     spliced_events = [splice_signal_based_on_intersection(event, lower, upper) for event in shifted_events]
     return spliced_signals, spliced_events
 
-def plot_electrode_measurement( time_arr : np.array, electode_measurement: np.array, mea_parameters: dict, spliced_events = None, title: str = "Current measurement recorded at the electrode at position {}", plot_label : str = None):
+def plot_electrode_measurement(  electode_measurement: np.array, mea_parameters: dict, spliced_events = None, title: str = "Current measurement recorded at the electrode at position {}", plot_label : str = None):
     if spliced_events is not None:
         for num, events in enumerate(spliced_events):
             plt.scatter(events[:, 0], events[:, 1], label = "neuron_{}".format(num))
     
-    plt.plot( time_arr,  electode_measurement, label = plot_label if plot_label is not None else None)
+    plt.plot( electode_measurement[:, 0],   electode_measurement[:, 1], label = plot_label if plot_label is not None else None)
     plt.title(title.format(mea_parameters['electrode_position']))
     plt.xlabel("time (arbitrary) ",fontsize = 18)
-    plt.ylabel("current (mA)", fontsize = 18)
+    plt.ylabel("current ($\mu$A)", fontsize = 18)
     plt.legend()
     plt.show()
 
@@ -251,32 +265,119 @@ def plot_decay_with_distance_example():
     plt.legend()
     plt.show()
 
+
+def apply_butterworth_filter(signal: np.array ,filter_order: int, critical_freq: list, output = 'sos'):
+    """  Design an Nth-order digital or analog Butterworth filter and return the filter coefficients.
+
+    Args:
+        signal (np.array): _description_
+        filter_order (int): The order of the filter.
+        critical_freq (array_like): The critical frequency or frequencies. For lowpass and highpass filters, Wn is a scalar; for bandpass and bandstop filters, Wn is a length-2 sequence.
+                                For a Butterworth filter, this is the point at which the gain drops to 1/sqrt(2) that of the passband (the “-3 dB point”).
+        output (str, optional): Type of output: numerator/denominator (‘ba’), pole-zero (‘zpk’), or second-order sections (‘sos’). Default is ‘ba’ for backwards compatibility, but ‘sos’ 
+                                should be used for general-purpose filtering. Defaults to 'sos'.
+
+    Returns:
+        _type_: Butterworth filtered signal.
+    """
+    sos = scipy.signal.butter(filter_order, critical_freq, output = output)
+    signal[:,1] = scipy.signal.sosfilt(sos, signal[:,1])
+    return signal
+
+
+
+def save_electrode_measurement_to_matfile( measurement: np.array, file_name: str = 'latest_electrode_measurement'):
+    mdict = { 'electrode_measurement' : measurement}
+    dir = r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results"
+    file_path = os.path.join(dir, file_name) + ".mat"
+    scipy.io.savemat(file_path, mdict)
+
+def single_bursting_example():
+    neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,100])}]
+    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([100, 0, 0])}
+    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+
    
+    voltages = combine_time_and_signal_into_2d_array(ts, voltages)
+    currents = combine_time_and_signal_into_2d_array(ts, currents)
+    events = combine_time_and_signal_into_2d_array(time_events, y_events)
+    print(type(voltages[0]), events[0])
+    plot_signal_and_events(voltages, events)
+    plot_signal_and_events(currents, events)
+   
+    elec_m = electrode_measurements(neurons_list, mea_parameters, currents)
+     
+    plot_electrode_measurement( elec_m, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
+    # noise_adjusted_potential =  add_gaussian_noise(elec_m)
+    # filtered_signal = apply_butterworth_filter( noise_adjusted_potential, 5, 0.8)
+    plot_electrode_measurement( filtered_signal, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
+    save_electrode_measurement_to_matfile(elec_m)
+
+def near_synchronous_dual_bursting_example():
+    neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,100])}
+                     , {'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.4, 'track_event': sb.voltage_passes_threshold , 'location': np.array([200,0,100])}]
+    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([100, 0, 0])}
+    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+
+    plt.plot(ts[0], voltages[0])
+    plt.show()
+    plt.plot(ts[0], currents[0])
+    plt.show()
+    shifts = [200, 720]
+    spliced_currents, spliced_events = shift_and_splice_signals(ts, currents, time_events, y_events, shifts)
+    plt.plot(spliced_currents[0][:, 0], spliced_currents[0][:, 1])
+    plt.show()
+    elec_m = electrode_measurements(neurons_list, mea_parameters, spliced_currents)
+    plt.plot(spliced_currents[:,0],   elec_m )
+    plt.show()
+    # noise_adjusted_spliced_voltages =  add_gaussian_noise(elec_m)
+    plot_electrode_measurement(spliced_currents[0][:,0], noise_adjusted_spliced_voltages, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
+    save_electrode_measurement_to_matfile(elec_m)
+
+def different_distance_bursting_example():
+    neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,100])}
+                     , {'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.4, 'track_event': sb.voltage_passes_threshold , 'location': np.array([1000,0,50])}]
+    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([200, 0, 0])}
+    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+
+    shifts = [200, 220]
+    spliced_currents, spliced_events = shift_and_splice_signals(ts, currents, time_events, y_events, shifts)
+    
+    elec_m = electrode_measurements(neurons_list, mea_parameters, spliced_currents)
+    plot_electrode_measurement(  spliced_currents[0][:,0], elec_m, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
 
 
+def bursting_with_additive_noise_example():
+    neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}
+                    , {'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.4, 'track_event': sb.voltage_passes_threshold , 'location': np.array([0,0,100])}]
+    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([20, 0, 0])}
+    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+
+    shifts = [200, 220]
+    spliced_voltages, spliced_events = shift_and_splice_signals(ts, voltages , time_events, y_events, shifts)
+    
+    plot_signal_and_events( spliced_voltages, spliced_events)
+    noise_adjusted_spliced_voltages =  add_gaussian_noise(spliced_voltages)
+    plot_signal_and_events( noise_adjusted_spliced_voltages, spliced_events)
+    elec_m = electrode_measurements(neurons_list, mea_parameters,  noise_adjusted_spliced_voltages)
+    plot_electrode_measurement( spliced_voltages[0][:, 0], elec_m, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
+    s
+
+def test():
+    neurons_list = [{'param_set': sb.morris_lecar_defaults(V_3 = 11.96), 'time_range': (0, 10000, 0.0001), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}]
+    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+  
+    plt.plot(ts[0], voltages[0])
+    plt.show()
 
 def main():
-    plot_decay_with_distance_example()
-  
+    # plot_decay_with_distance_example()
+    single_bursting_example()
+    # near_synchronous_dual_bursting_example()
+    # bursting_with_additive_noise_example()
+    # different_distance_bursting_example()
+    # test()
 
-    # neurons_list = [{'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([1,1,1])}
-    #                 , {'param_set': sb.morris_lecar_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-20, 1, 0.001), 'stretch': 4.22, 'track_event': sb.voltage_passes_threshold , 'location': np.array([1,2,1])}]
-    # mea_parameters = {'sigma_tissue': 0.3, 'sigma_saline': 1.5, 'brain_slice_height': 300, 'electrode_position': np.array([5, 5, 0])}
-   
-    # ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
-    
-    # # 
-    # shifts = [200, 220]
-    
-    
-    # # plot_current(ts[0], currents[0])
-
-
-    # spliced_currents, spliced_events = shift_and_splice_signals(ts, currents, time_events, y_events, shifts)
-    # plot_signal_and_events(spliced_currents, spliced_events)
-    # elec_m = electrode_measurements(neurons_list, mea_parameters, spliced_currents)
-    # plot_electrode_measurement( spliced_currents[0][:, 0], elec_m, mea_parameters, spliced_events= spliced_events  ,plot_label = 'Current converted bursting signals')
-  
 
 if __name__ == "__main__":
 
