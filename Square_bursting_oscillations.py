@@ -3,7 +3,44 @@ from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 from typing import Tuple, List
 
-def morris_lecar_defaults(V_1: float = -1.2,V_2 : float = 18, V_3 : float = 12, V_4 : float = 17.4, E_Ca : float = 123, E_k : float = -84, E_L : float = -60, 
+
+
+def square_wave_defaults(V_1: float = -1.2, V_2 : float = 18, V_3 : float = 12, V_4 : float = 17.4, E_Ca : float = 120, E_k : float = -84, E_L : float = -60, 
+                           g_K : float = 8, g_L : float = 2, g_Ca : float = 4, g_KCa : float = 0.75, C_m: float = 1, I_app : float = 45, phi: float = 4.6, 
+                           epsilon: float = 0.1, k_Ca : float = 1, mu : float = 0.02, f : float = 1) -> dict:
+    params = {
+            "V_1" : V_1,
+            "V_2" : V_2,
+            "V_3" : V_3,
+            "V_4" : V_4,
+
+            "E_Ca" : E_Ca,
+            "E_k" : E_k,
+            "E_L" : E_L,
+
+        # peak conductances of the channel proteins
+            "g_K" : g_K,
+            "g_L" :  g_L,
+            "g_Ca" : g_Ca,
+            "g_KCa" : g_KCa,
+
+            "C_m" :  C_m, 
+
+            # I_app : applied current
+            "I_app" : I_app,
+
+            "phi" : phi,
+            #  ratio of free to total calcium in the cell range (0.00018 - 0.0002)
+            "epsilon" : epsilon,
+            #  k_Ca  : calcium removal rate
+            "k_Ca" : k_Ca,
+            #  mu converting current into a concentration flux involving the cell's surface area to the calcium compartment volume
+            "mu" :  mu ,
+            "f" : f,
+    }
+    return params 
+
+def TIDA_defaults(V_1: float = -1.2, V_2 : float = 18, V_3 : float = 12, V_4 : float = 17.4, E_Ca : float = 123, E_k : float = -84, E_L : float = -60, 
                            g_K : float = 8, g_L : float = 2, g_Ca : float = 4, g_KCa : float = 0.60, C_m: float = 20, I_app : float = 45, phi: float = 0.24, 
                            epsilon: float = 0.0002, k_Ca : float = 1, mu : float = 0.01, f : float = 9) -> dict:
     params = {
@@ -55,12 +92,12 @@ def morris_lecar(t: float, u: tuple, params:dict) -> Tuple[float,float,float]:
     return np.array((dVdt, dndt, dCa_conc_dt))
 
 def get_I_KCa(Ca_conc:float, V:float, params:dict) -> float:
-    z = np.power(Ca_conc, params["f"]) / (np.power(Ca_conc, params["f"]) + 1)
+    z = Ca_conc**params["f"] / ((Ca_conc**params["f"]) + 1)
     I_KCa = params["g_KCa"]*z*(V-params["E_k"])
     return I_KCa
 
 def get_I_Ca(V:float , params:dict) -> float:
-    M_inf = 0.5*(1 + np.tanh((V - params["V_1"])/params["V_2"]))
+    M_inf = 0.5*(1 + np.tanh(((V - params["V_1"])/params["V_2"])))
     I_Ca =  params["g_Ca"]*M_inf*(V-params["E_Ca"])
     return I_Ca
 
@@ -70,14 +107,6 @@ def convert_ml_voltage_to_current( V_arr: np.array, n_arr: np.array, Ca_conc_arr
     #      # feed voltage into Morris lecar to get dvdt then convert to .feed values into this equation  -g_L*(V- E_L) - g_K*n*(V-E_k) - I_Ca - I_KCa)/C_m
     I_total = (-params["g_L"]*(V_arr- params["E_L"]) - params["g_K"]*n_arr*(V_arr-params["E_k"]) - I_Ca - I_KCa)/params["C_m"]
     return I_total
-
-
-
-
-def apply_voltage_filter(v_array: np.array, stretch: float =4.2) -> np.array:
-    stretched = np.array([stretch*v if v > 0 else v for v in v_array])
-    translated = stretched - 30
-    return translated
 
 
 def plot_voltage(time_vec: np.array, volt_vec: np.array, title: str = "The Morris Lecar system integrated in time for parameter values that display TIDA-like behaviour"):
@@ -97,19 +126,27 @@ def filter_threshold_passing_events(sol: object):
     event_y_arr = sol.y_events[0]
     e_filter = np.array([sol.t[0] <= event <= sol.t[-1] for event in  event_t_arr])
   
-    if e_filter == []:
+    if len(e_filter) == 0:
         raise Exception("no events identified please ensure the event being tracked is valid!")
     
     filtered_t_events = event_t_arr[e_filter]
     filtered_y_events =  event_y_arr[e_filter]
+    
     return filtered_t_events, filtered_y_events 
 
-def ivp_solver(system_of_equations: callable,  time_range: tuple, inital_cond: tuple, params: callable = morris_lecar_defaults(), track_event: callable = voltage_passes_threshold) -> object:
+
+def ivp_solver(system_of_equations: callable,  time_range: tuple, initial_cond: tuple, params: callable = TIDA_defaults(), track_event: callable = voltage_passes_threshold,  numerical_method = 'RK45', rtol = 1e-8) -> object:
     track_event.direction = 1
-    sol = solve_ivp(system_of_equations, time_range, inital_cond, args=(params,), events= track_event, t_eval= np.arange(time_range[0], time_range[1],time_range[2]))
+    sol = solve_ivp(system_of_equations, time_range[0:2], initial_cond, args=(params,), events= track_event, t_eval= np.arange(time_range[0], time_range[1], time_range[2]), method = numerical_method, rtol = rtol)
     return sol
+
+
+
 
 def main():
     pass
+
+    
+
 if __name__ == '__main__':
     main()

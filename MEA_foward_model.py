@@ -10,7 +10,7 @@ from typing import List, Tuple
 from numpy.core.fromnumeric import std
 import os
 import scipy.io, scipy.signal
-
+import copy
 from scipy.io import loadmat
 # import colorednoise as cn
 
@@ -141,6 +141,7 @@ def integrate_neurons(neurons_list: List[dict]) -> Tuple[np.array]:
   
     for neuron_dict in neurons_list:
         sol = sb.ivp_solver(sb.morris_lecar, time_range = neuron_dict['time_range'], initial_cond = neuron_dict['initial_cond'], params = neuron_dict['param_set'])
+
         ts.append(sol.t)
         voltages.append(sol.y[0])
         current = sb.convert_ml_voltage_to_current(*sol.y, neuron_dict['param_set'])
@@ -163,7 +164,7 @@ def plot_signal_and_events(signal:List[np.array], events:List[np.array]):
     plt.show()
 
 def shift_signal(signal: np.array, shift_amount: float) -> np.array:
-
+    print(signal)
     new_signal = signal.copy()
     new_signal[:, 0] += shift_amount
     return new_signal
@@ -201,18 +202,13 @@ def  assert_list_is_not_singular(list:list):
 def combine_time_and_signal_into_2d_array(times: List[np.array], signals: List[np.array]):
     return [np.array(list(zip(t_event, y_event))) for t_event, y_event in zip(times, signals)]
 
-def shift_and_splice_signals(ts: List[np.array], signals: List[np.array], time_events, y_events, shifts: list):
+def shift_and_splice_signals(signals: List[np.array], shifts: list):
     assert_list_is_not_singular(signals)
     assert_list_is_not_singular(shifts)
-    assert_list_is_not_singular(time_events)
-    # time_events_matrix =   combine_time_and_signal_into_2d_array(time_events, y_events)
-    # time_signal_matrix =  combine_time_and_signal_into_2d_array(ts, signals)
-    shifted_events = [shift_signal(event, shift) for event, shift in zip(time_events_matrix, shifts)]
-    shifted_signals = [shift_signal(signal, shift) for signal, shift in zip(time_signal_matrix, shifts)]
+    shifted_signals = [shift_signal(signal, shift) for signal, shift in zip(signals, shifts)]
     lower, upper = time_intersection(shifted_signals)
-    # spliced_signals =  [splice_signal_based_on_intersection(sig, lower, upper) for sig in shifted_signals]
-    # spliced_events = [splice_signal_based_on_intersection(event, lower, upper) for event in shifted_events]
-    return spliced_signals, spliced_events
+    spliced_signals =  [splice_signal_based_on_intersection(sig, lower, upper) for sig in shifted_signals]
+    return spliced_signals
 
 
 def load_matlab_file(filedir: str):
@@ -229,7 +225,8 @@ def get_cluster_times(df):
     return cluster_class, cluster_times
 
 def process_waveclus_results(waveclus_filedir, events_filedir, par_pre: int = 20):
-    colors = ['grey', 'b', 'r', 'g']
+    colors = ['grey', 'b', 'r', 'g', 'tab:brown', 'darkviolet']
+    neuron_colours = ['m', 'lawngreen', 'm'] #'darkorange'
     mat = load_matlab_file(waveclus_filedir)
     df = make_dataframe(mat)
     cluster_class, cluster_times = get_cluster_times(df)
@@ -238,42 +235,61 @@ def process_waveclus_results(waveclus_filedir, events_filedir, par_pre: int = 20
     unique_clusters = np.unique(cluster_class)
     spikes_no_detected = len(cluster_times)
 
-    spikes = np.load(events_filedir)
-    spikes_no = len(spikes)
-    print(spikes_no)
-    print(" number of actual spikes {}. Number of detected spikes {}".format(spikes_no, spikes_no_detected))
+    spikes_list = np.load(events_filedir, allow_pickle=True)
   
+    true_pos = 0  
     for cluster in unique_clusters:
         c_time= [cluster_times[i] for i in range(len(cluster_times)) if cluster_class[i] == cluster] 
-        plt.scatter(c_time, np.ones(len(c_time)), c= colors[int(cluster)], s =90)
-    
-    plt.scatter(spikes[:,0], np.ones(len(spikes[:,1])) + 0.0001, color=[0.4940, 0.1840, 0.5560], s =90)
+        plt.scatter(c_time, np.ones(len(c_time)), c= colors[int(cluster)], s =90, label= "cluster {}".format(int(cluster)))
+    if spikes_list[0].ndim == 1:
+        print(" number of actual spikes {}. Number of detected spikes {}".format(len(spikes_list), spikes_no_detected))
+        plt.scatter(spikes_list[:,0], np.ones(len(spikes_list[:,1])) + 0.01, color=[0.4940, 0.1840, 0.5560], label= "TIDA neuron 1", s =90)
+        for sp in cluster_times:
+            abs_diff = [abs(i) for i in (sp - spikes_list[:,0])]
+            for val in abs_diff:
+                if  val < 1:
+                    true_pos += 1
+                    pass
+    else:
+        print(" number of actual spikes {}. Number of detected spikes {}".format(sum([len(i) for i in spikes_list]), spikes_no_detected))
+        for i, neuron in enumerate(spikes_list):
+            plt.scatter(neuron[:,0], np.ones(len(neuron[:,1])) + 0.005*(i+1), color= neuron_colours[i], label= "TIDA neuron {}".format(i + 1), s =90)
+            for sp in cluster_times:
+                abs_diff = [abs(i) for i in (sp - neuron[:,0])]
+                for val in abs_diff:
+                    if  val < 1:
+                        true_pos += 1
+                        pass
     plt.ylim([0.9,1.2])
     plt.xlabel("Time (ms)", fontsize = 20)
     plt.xticks( fontsize = 20)
+    plt.legend(fontsize = 20)
     plt.show()
 
-    true_pos = 0    
-    for sp in cluster_times:
-        abs_diff = [abs(i) for i in (sp - spikes[:,0])]
-        for val in abs_diff:
-            if  val < 1:
-                true_pos += 1
-                pass
+      
+   
     print("number of true positives {}".format(true_pos))
 
-def plot_electrode_measurement( electode_measurement: np.array, mea_parameters: dict, spliced_events = None, rescale=None , y_val = None, title: str = "Potential measurement recorded at the electrode at position {}", plot_label : str = None, y_label = "potential ($m$V)", x_label= "time (arbitrary) "):
-  
+def scale_to_seconds(measurement):
+    cp = copy.deepcopy(measurement[:, 0])
+    cp= cp/1000
+    return cp
+
+
+def plot_electrode_measurement( electode_measurement: np.array, mea_parameters: dict, scale_to_seconds = False, spikes = None, rescale=None , y_val = None, title: str = "Potential measurement recorded at the electrode at position {}", plot_label : str = None, y_label = "potential ($m$V)", x_label= "time (arbitrary) "):
+    
+    
+    colours= ['m', 'lawngreen', 'maroon']
     if rescale is not None:
         plt.plot(np.interp(electode_measurement[:, 0], (electode_measurement[:, 0].min(), electode_measurement[:, 0].max()), (0, 120)),   electode_measurement[:, 1], label = plot_label if plot_label is not None else None)
-        if spliced_events is not None:
-            for num, events in enumerate(spliced_events):
-                plt.scatter(np.interp(events[:, 0], (electode_measurement[:, 0].min(), electode_measurement[:, 0].max()), (0, 120)), events[:, 1] if y_val is None else np.ones(len(events[:, 0])) * y_val, label = "TIDA neuron {}".format(num + 1), c = 'r', s =50)
+        if spikes is not None:
+            for num, events in enumerate(spikes):
+                plt.scatter(np.interp(events[:, 0], (electode_measurement[:, 0].min(), electode_measurement[:, 0].max()), (0, 120)), events[:, 1] if y_val is None else np.ones(len(events[:, 0])) * y_val, label = "TIDA neuron {}".format(num + 1), c = colours[num], s =50)
     else:
         plt.plot( electode_measurement[:, 0],   electode_measurement[:, 1], label = plot_label if plot_label is not None else None)
-        if spliced_events is not None:
-            for num, events in enumerate(spliced_events):
-                plt.scatter(events[:, 0], events[:, 1] if y_val is None else np.ones(len(events[:, 0])) * y_val, label = "TIDA neuron {} spikes".format(num + 1), c = 'r', s =50)
+        if spikes is not None:
+            for num, events in enumerate(spikes):
+                plt.scatter(events[:, 0], events[:, 1] if y_val is None else np.ones(len(events[:, 0])) * y_val, label = "TIDA neuron {} spikes".format(num + 1), s =50,  c = colours[num])
     plt.title(title.format(mea_parameters['electrode_position']), fontsize = 20)
     plt.xlabel(x_label, fontsize = 20)
     plt.ylabel(y_label, fontsize = 20)
@@ -349,64 +365,80 @@ def find_spikes(signal:np.array, height_for_peak_detection: list = [0,30]):
 
 
 def single_bursting_example(save_events_path: str = None, return_voltage: np.ndarray =None):
-    neurons_list = [{'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.01), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold , 'location': np.array([0,0,30])}]
+    neurons_list = [{'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.1), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold , 'location': np.array([0,0,30])}]
     mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([0, 0, 0])}
     ts, voltages, currents= integrate_neurons(neurons_list)
     
     voltages = combine_time_and_signal_into_2d_array(ts, voltages)
     currents = combine_time_and_signal_into_2d_array(ts, currents)
+    # print(currents)
+    plt.plot(voltages[0][:,0], voltages[0][:,1])
+    plt.title("The voltage signal of the 3D Morris Lecar system for parameter values that display TIDA-like behaviour", fontsize=20)
+    plt.xlabel("Time (ms)", fontsize =20)
+    plt.ylabel("Voltage ($mV$)", fontsize =20)
+    plt.xticks(fontsize =20)
+    plt.yticks(fontsize =20)
+    plt.show()
     elec_m = electrode_measurements(neurons_list, mea_parameters, currents)
     spikes= find_spikes(elec_m)
-   
-  
-    noise_adjusted_potential =  add_pink_noise(elec_m, framerate = 100000, amp = 0.01)
-    plot_electrode_measurement(  noise_adjusted_potential, mea_parameters, spliced_events= [spikes], y_val = 0, x_label= "Time ($ms$)",y_label= "Voltage ($mV$)")
+    noise_adjusted_potential =  add_pink_noise(elec_m, framerate = 10000, amp = 0.06)
+    print(len(noise_adjusted_potential[:, 1]))
+    plot_electrode_measurement(  noise_adjusted_potential, mea_parameters, spikes= [spikes], x_label= "Time ($ms$)",y_label= "Voltage ($mV$)")
     save_electrode_measurement_to_matfile( noise_adjusted_potential[:, 1], filename = 'single_spiking_high_noise')
     if save_events_path is not None:
         np.save(save_events_path + '\\events',  spikes)
-    if return_voltage is not None:
-        interpolated_peak_times_in_ms = interpolate_times_in_ms(ts, voltages)
-
-def near_synchronous_dual_bursting_example():
-    neurons_list = [{'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.01), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,30])}
-                     , {'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.01), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold , 'location': np.array([10,0,10])}]
-    shifts = [0, 500]
-
   
-    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([0, 0, 0])}
-    ts, voltages, currents = integrate_neurons(neurons_list)
+def realign_spikes(spikes, electrode_rec):
+    realigned_spikes = copy.deepcopy(spikes)
+    for i, neuron in enumerate(spikes):
+        realigned_spikes[i][:,0] = np.subtract(neuron[:,0], electrode_rec[0,0])
+    return realigned_spikes
 
+
+def near_synchronous_dual_bursting_example(save_events_path = None):
+    neurons_list = [{'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.1), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,30])}
+                     , {'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.1), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold , 'location': np.array([30,30,3])}]
+    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([0, 0, 0])}
+    shifts = [0, 500]
+    ts, voltages, currents = integrate_neurons(neurons_list)
     voltages = combine_time_and_signal_into_2d_array(ts, voltages)
     currents = combine_time_and_signal_into_2d_array(ts, currents)
-    elec_m = electrode_measurements(neurons_list, mea_parameters, currents)
-    spikes= find_spikes(elec_m)
-    plot_electrode_measurement( elec_m, mea_parameters,  spliced_events = [spikes], y_val = 0, x_label= "Time ($ms$)",y_label= "Voltage ($mV$)", plot_label = 'Potenial at the electrode')
-       
-    plt.plot(currents[0][:, 0], currents[0][:, 1])
-    plt.plot(elec_m[:, 0], elec_m[:, 1])
-    plt.scatter(spikes[:,0], spikes[:,1], c='r')
+    spliced_currents = shift_and_splice_signals(currents, shifts)
+    spikes= [find_spikes(curr, height_for_peak_detection= [-1, 6]) for curr in spliced_currents]
+    elec_m = electrode_measurements(neurons_list, mea_parameters, spliced_currents)
+    plt.plot(elec_m[:, 0], elec_m[:,1])
     plt.show()
-    noise_adjusted_potential =  add_pink_noise(elec_m, framerate = 100000, amp = 0.01)
-    spliced_currents, spliced_events = shift_and_splice_signals(ts, currents, time_events, y_events, shifts)
-    elec_m = electrode_measurements(neurons_list, mea_parameters, spliced_currents)
-    # noise_adjusted_potential =  add_pink_noise(elec_m, framerate = 7291, amp = 0.01)
+    realigned_spikes = realign_spikes(spikes, elec_m)
    
-    print("time", noise_adjusted_potential[-1, 0])
-    plot_electrode_measurement( noise_adjusted_potential, mea_parameters,  spliced_events = None, plot_label = 'Potenial at the electrode')
-    save_electrode_measurement_to_matfile(noise_adjusted_potential[:, 1], filename = 'test2' )
+    noise_adjusted_potential =  add_pink_noise(elec_m, framerate = 10_000, amp = 0.01)
+    plot_electrode_measurement( noise_adjusted_potential, mea_parameters,  spikes = spikes, y_val = 0, x_label= "Time ($ms$)",y_label= "Voltage ($mV$)", plot_label = 'Potenial at the electrode')
+    print("recording len in ms:",len(noise_adjusted_potential)/10_000)
+    save_electrode_measurement_to_matfile(noise_adjusted_potential[:, 1], filename = 'near_sync_different_parameters' )
+    if save_events_path is not None:
+        np.save(save_events_path + '\\events',  realigned_spikes)
 
-def different_distance_bursting_example():
-    neurons_list = [{'param_set': sb.TIDA_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'stretch': 4.2, 'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,100])}
-                     , {'param_set': sb.TIDA_defaults(), 'time_range': (0, 10000, 0.01), 'initial_cond': (-3.06560496e+01,  7.33832272e-03, 8.35251563e-01), 'stretch': 4.4, 'track_event': sb.voltage_passes_threshold , 'location': np.array([1000,0,50])}]
-    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([200, 0, 0])}
-    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
 
-    shifts = [200, 220]
-    spliced_currents, spliced_events = shift_and_splice_signals(ts, currents, time_events, y_events, shifts)
-   
+def synchronous_bursting_example(save_events_path):
+    neurons_list = [{'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.1), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold ,'location': np.array([0,0,30])}
+                     , {'param_set': sb.TIDA_defaults(), 'time_range': (0, 8825, 0.1), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold , 'location': np.array([30,30,3])}]
+    mea_parameters = {'sigma_tissue': 0.366, 'sigma_saline': 1.408, 'brain_slice_height': 200, 'electrode_position': np.array([0, 0, 0])}
+    shifts = [0, 80]
+    ts, voltages, currents = integrate_neurons(neurons_list)
+    voltages = combine_time_and_signal_into_2d_array(ts, voltages)
+    currents = combine_time_and_signal_into_2d_array(ts, currents)
+    spliced_currents = shift_and_splice_signals(currents, shifts)
+    spikes= [find_spikes(curr, height_for_peak_detection= [-1, 6]) for curr in spliced_currents]
     elec_m = electrode_measurements(neurons_list, mea_parameters, spliced_currents)
-    print(len(elec_m))
-    plot_electrode_measurement(  spliced_currents[0][:,0], elec_m, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
+    realigned_spikes = realign_spikes(spikes, elec_m)
+
+    noise_adjusted_potential =  add_pink_noise(elec_m, framerate = 10_000, amp = 0.01)
+    plot_electrode_measurement( noise_adjusted_potential, mea_parameters,  spikes = spikes, y_val = 0, x_label= "Time ($ms$)",y_label= "Voltage ($mV$)", plot_label = 'Potenial at the electrode')
+    print("recording len in ms:",len(noise_adjusted_potential)/10_000)
+    save_electrode_measurement_to_matfile(noise_adjusted_potential[:, 1], filename = 'synchronous_bursting' )
+    if save_events_path is not None:
+        np.save(save_events_path + '\\events',  realigned_spikes)
+
+
 
 
 def bursting_with_additive_noise_example():
@@ -416,69 +448,69 @@ def bursting_with_additive_noise_example():
     ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
 
     shifts = [200, 220]
-    spliced_voltages, spliced_events = shift_and_splice_signals(ts, voltages , time_events, y_events, shifts)
+    spliced_voltages, spikes = shift_and_splice_signals(ts, voltages , time_events, y_events, shifts)
     
-    plot_signal_and_events( spliced_voltages, spliced_events)
+    plot_signal_and_events( spliced_voltages, spikes)
     noise_adjusted_spliced_voltages =  add_pink_noise(spliced_voltages)
-    plot_signal_and_events( noise_adjusted_spliced_voltages, spliced_events)
+    plot_signal_and_events( noise_adjusted_spliced_voltages, spikes)
     elec_m = electrode_measurements(neurons_list, mea_parameters,  noise_adjusted_spliced_voltages)
-    plot_electrode_measurement( spliced_voltages[0][:, 0], elec_m, mea_parameters, spliced_events= None, plot_label = 'Current converted bursting signals')
+    plot_electrode_measurement( spliced_voltages[0][:, 0], elec_m, mea_parameters, spikes= None, plot_label = 'Current converted bursting signals')
     
 
 def test():
-    neurons_list = [{'param_set': sb.TIDA_defaults(C_m=1, eplsilon= 0.01), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}]
-                    # ,{'param_set': sb.square_wave_defaults(phi = 0.24, E_Ca= 123,  f=7, epsilon= 0.0002, C_m = 20, mu=0.01,  g_KCa= 0.6), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}
-                    # ,{'param_set': sb.square_wave_defaults(phi = 0.24, E_Ca= 123,  f=8, epsilon= 0.0002, C_m = 20, mu=0.01, g_KCa= 0.6), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}
-                    # ,{'param_set': sb.square_wave_defaults(phi = 0.24, E_Ca= 123,  f=9, epsilon= 0.0002, C_m = 20, mu=0.01,  g_KCa= 0.60), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}]
-    ts, voltages, currents, time_events, y_events = integrate_neurons(neurons_list)
+    neurons_list = [{'param_set': sb.TIDA_defaults(C_m=1, eplsilon= 0.01), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01),  'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}
+                    ,{'param_set': sb.TIDA_defaults(phi = 0.24, E_Ca= 123,  f=7, epsilon= 0.0002, C_m = 20, mu=0.01,  g_KCa= 0.6), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}
+                    ,{'param_set': sb.TIDA_defaults(phi = 0.24, E_Ca= 123,  f=8, epsilon= 0.0002, C_m = 20, mu=0.01, g_KCa= 0.6), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}
+                    ,{'param_set': sb.TIDA_defaults(phi = 0.24, E_Ca= 123,  f=9, epsilon= 0.0002, C_m = 20, mu=0.01,  g_KCa= 0.60), 'time_range': (0, 4000, 0.001), 'initial_cond': (-3.06560496e+01,  7.33832272e-03,  8.35251563e-01), 'track_event': sb.voltage_passes_threshold ,'location': np.array([20,0,100])}]
+    ts, voltages, currents = integrate_neurons(neurons_list)
 
     plt.plot(ts[0], voltages[0])
     plt.show()
         # Make a figure 
-    # fig, (ax1, ax2, ax3, ax4)= plt.subplots(4,1)
-    # fig.size=(30,8)
-    # fig.suptitle('Simulations of ML model under $g_{KCa}$ parameter variation', fontsize=15)
+    fig, (ax1, ax2, ax3, ax4)= plt.subplots(4,1)
+    fig.size=(30,8)
+    fig.suptitle('Simulations of ML model under $g_{KCa}$ parameter variation', fontsize=15)
 
     # # Plot the Voltage
     
-    # # ax1.set_xlabel('time (arbitrary)',fontsize=10)
-    # ax1.set_ylabel('V ($mV$)', fontsize=15)
-    # ax1.plot(ts[0], voltages[0], label = "$g_{KCa} = 0.75$")
-    # ax1.grid()
+    # ax1.set_xlabel('time (arbitrary)',fontsize=10)
+    ax1.set_ylabel('V ($mV$)', fontsize=15)
+    ax1.plot(ts[0], voltages[0], label = "$g_{KCa} = 0.75$")
+    ax1.grid()
     
-    # ax2.plot(ts[1], voltages[1], label = "$g_{KCa} = 0.70$", c = 'r')
-    # # ax2.set_xlabel('time (arbitrary)', fontsize=10)
-    # ax2.set_ylabel('V ($mV$)', fontsize=15)
-    # ax2.grid()
+    ax2.plot(ts[1], voltages[1], label = "$g_{KCa} = 0.70$", c = 'r')
+    # ax2.set_xlabel('time (arbitrary)', fontsize=10)
+    ax2.set_ylabel('V ($mV$)', fontsize=15)
+    ax2.grid()
 
-    # ax3.plot(ts[2], voltages[2], label = "$g_{KCa} = 0.65$", c = 'g')
-    # # ax3.set_xlabel('Time (arbitrary)', fontsize=15)
-    # ax3.set_ylabel('V ($mV$)', fontsize=15)
-    # ax3.grid()
+    ax3.plot(ts[2], voltages[2], label = "$g_{KCa} = 0.65$", c = 'g')
+    # ax3.set_xlabel('Time (arbitrary)', fontsize=15)
+    ax3.set_ylabel('V ($mV$)', fontsize=15)
+    ax3.grid()
 
-    # ax4.plot(ts[3], voltages[3], label = "$g_{KCa} = 0.60$", c = 'tab:orange')
-    # ax4.set_xlabel('Time (arbitrary)', fontsize=15)
-    # ax4.set_ylabel('V ($mV$)', fontsize=15)
-    # ax4.grid()
+    ax4.plot(ts[3], voltages[3], label = "$g_{KCa} = 0.60$", c = 'tab:orange')
+    ax4.set_xlabel('Time (arbitrary)', fontsize=15)
+    ax4.set_ylabel('V ($mV$)', fontsize=15)
+    ax4.grid()
 
-    # custom_xlim = (500, 4000)
-    # custom_ylim = (-45, 40)
+    custom_xlim = (500, 4000)
+    custom_ylim = (-45, 40)
 
-    # plt.setp((ax1, ax2, ax3, ax4), xlim=custom_xlim, ylim=custom_ylim)
-    # lines_labels = [ax.get_legend_handles_labels() for ax in fig.axes]
-    # lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
+    plt.setp((ax1, ax2, ax3, ax4), xlim=custom_xlim, ylim=custom_ylim)
+    lines_labels = [ax.get_legend_handles_labels() for ax in fig.axes]
+    lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
 
-    # fig.legend(lines, labels)
-    # plt.show()
+    fig.legend(lines, labels)
+    plt.show()
 
 
 def main():
     # plot_decay_with_distance_example()
-    # single_bursting_example()
-    # process_waveclus_results(r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results\Single_spiking_high_noise\times_Single_spiking_high_noise.mat", r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results\Single_spiking_high_noise\events.npy")
-    near_synchronous_dual_bursting_example()
-    # bursting_with_additive_noise_example()
-    # different_distance_bursting_example()
+    # single_bursting_example(r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results")
+    # near_synchronous_dual_bursting_example()
+    # synchronous_bursting_example(r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results\Synchronous_bursting")
+    process_waveclus_results(r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results\Synchronous_bursting\times_synchronous_bursting.mat", r"D:\Uni work\Engineering Mathematics Work\Technical Project\Simulation_results\Synchronous_bursting\events.npy")
+    
     # test()
 
 
